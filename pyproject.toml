@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codeevaluator"
+version = "0.1.0"
+description = "ソートアルゴリズムのPythonプログラムを解析し、理論的・実測的な計算量オーダーを判定するシステム"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.0",
+    "matplotlib>=3.9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: 実測を伴う遅いテスト (CI では -m 'not slow' で除外可能)",
+]
