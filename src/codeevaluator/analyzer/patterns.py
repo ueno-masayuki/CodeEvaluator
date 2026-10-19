@@ -8,6 +8,24 @@ from __future__ import annotations
 
 import ast
 
+#: 認識済みアルゴリズムの文献上の計算量 (最良, 平均, 最悪)。表示の補足専用。
+LITERATURE_COMPLEXITIES: dict[str, tuple[str, str, str]] = {
+    "バブルソート": ("O(n) (早期終了付き実装)", "O(n²)", "O(n²)"),
+    "挿入ソート": ("O(n)", "O(n²)", "O(n²)"),
+    "選択ソート": ("O(n²)", "O(n²)", "O(n²)"),
+    "マージソート": ("O(n log n)", "O(n log n)", "O(n log n)"),
+    "クイックソート": ("O(n log n)", "O(n log n)", "O(n²)"),
+    "ヒープソート": ("O(n log n)", "O(n log n)", "O(n log n)"),
+    "組み込みソート (Timsort)": ("O(n)", "O(n log n)", "O(n log n)"),
+}
+
+
+def literature_complexities(name: str | None) -> tuple[str, str, str] | None:
+    """認識済みアルゴリズム名に対する文献上の (最良, 平均, 最悪) を返す。"""
+    if name is None:
+        return None
+    return LITERATURE_COMPLEXITIES.get(name)
+
 
 def recognize(
     func: ast.FunctionDef, module_funcs: dict[str, ast.FunctionDef] | None = None

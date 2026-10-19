@@ -18,6 +18,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from codeevaluator.analyzer.empirical import BenchmarkConfig, run_benchmark
+from codeevaluator.analyzer.patterns import literature_complexities
 from codeevaluator.analyzer.static import analyze_function
 from codeevaluator.discovery import SyntaxErrorJa, find_sort_functions
 from codeevaluator.fitting import classes_agree
@@ -152,15 +153,34 @@ def main() -> None:
             static_result = None
 
         if static_result is not None:
-            st.metric("理論計算量", static_result.complexity.label())
-            if static_result.worst_case is not None:
-                st.metric("最悪ケース", static_result.worst_case.label())
+            has_cases = (
+                static_result.best_case is not None
+                or static_result.worst_case is not None
+            )
+            if has_cases:
+                # 最良 / 平均 / 最悪 の 3 ケースを横並びで表示
+                best = static_result.best_case or static_result.complexity
+                worst = static_result.worst_case or static_result.complexity
+                for col, (label, cls) in zip(
+                    st.columns(3),
+                    [("最良", best), ("平均", static_result.complexity), ("最悪", worst)],
+                ):
+                    with col:
+                        st.metric(f"理論計算量 ({label})", cls.label())
+            else:
+                st.metric("理論計算量", static_result.complexity.label())
             st.progress(
                 static_result.confidence,
                 text=f"判定の信頼度: {static_result.confidence:.2f}",
             )
             if static_result.recognized_algorithm:
                 st.info(f"💡 **{static_result.recognized_algorithm}** の可能性が高い構造です。")
+                literature = literature_complexities(static_result.recognized_algorithm)
+                if literature:
+                    st.caption(
+                        f"文献値: 最良 {literature[0]} / 平均 {literature[1]} / "
+                        f"最悪 {literature[2]}"
+                    )
             with st.expander("判定根拠", expanded=True):
                 for reason in static_result.reasoning:
                     st.markdown(f"- {reason}")
@@ -301,6 +321,23 @@ def main() -> None:
                 "**一致していません**。測定範囲が狭い、定数項が支配的、"
                 "または静的解析の仮定が実装と合っていない可能性があります。"
             )
+
+        # 最良/最悪ケースと整列済み/逆順入力の実測の対応 (参考情報)
+        if static_result.best_case is not None and "sorted" in result.kind_results:
+            summary = result.kind_results["sorted"]
+            if summary.best_fit is not None:
+                st.caption(
+                    f"参考: 最良ケース理論 {static_result.best_case.label()} ⇔ "
+                    f"整列済み入力の実測 {summary.summary_label()}"
+                )
+        if static_result.worst_case is not None and "reversed" in result.kind_results:
+            summary = result.kind_results["reversed"]
+            if summary.best_fit is not None:
+                st.caption(
+                    f"参考: 最悪ケース理論 {static_result.worst_case.label()} ⇔ "
+                    f"逆順入力の実測 {summary.summary_label()} "
+                    "(最悪ケースの入力が逆順とは限りません)"
+                )
 
 if __name__ == "__main__":
     # Streamlit は __name__ == "__main__" でスクリプトを実行する。

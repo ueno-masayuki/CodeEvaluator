@@ -159,6 +159,7 @@ class StaticAnalysisResult:
     recursion_kind: str | None = None  # "linear" | "divide_halving" | "divide_partition"
     recognized_algorithm: str | None = None
     worst_case: ComplexityClass | None = None  # 平均と最悪が異なる場合のみ(クイックソート等)
+    best_case: ComplexityClass | None = None   # 平均と最良が異なる場合のみ(挿入ソート等)
 
 
 @dataclass(frozen=True)

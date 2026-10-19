@@ -288,6 +288,52 @@ def f(arr):
     assert result.confidence <= 0.5
 
 
+class TestBestCase:
+    def test_insertion_sort_best_case_linear(self, example_source):
+        result = analyze_function(example_source("insertion_sort"), "insertion_sort")
+        # 内側 while はデータ依存 (data[j] > key) → 最良ケース O(n)
+        assert result.best_case is ComplexityClass.LINEAR
+        assert any("最良ケース" in r for r in result.reasoning)
+
+    def test_bubble_with_early_exit_best_case_linear(self):
+        source = """
+def bubble_early(arr):
+    data = list(arr)
+    n = len(data)
+    for i in range(n):
+        swapped = False
+        for j in range(n - 1 - i):
+            if data[j] > data[j + 1]:
+                data[j], data[j + 1] = data[j + 1], data[j]
+                swapped = True
+        if not swapped:
+            break
+    return data
+"""
+        result = analyze_function(source, "bubble_early")
+        assert result.complexity is ComplexityClass.QUADRATIC
+        # 早期 break → 外側ループ 1 回 → 最良 O(n)
+        assert result.best_case is ComplexityClass.LINEAR
+
+    def test_selection_sort_has_no_better_best_case(self, example_source):
+        result = analyze_function(example_source("selection_sort"), "selection_sort")
+        # データ依存の打ち切りがない → 最良も O(n²) (best_case は None)
+        assert result.best_case is None
+
+    def test_merge_sort_has_no_better_best_case(self, example_source):
+        result = analyze_function(example_source("merge_sort"), "merge_sort")
+        assert result.best_case is None
+
+
+def test_literature_complexities():
+    from codeevaluator.analyzer.patterns import literature_complexities
+
+    assert literature_complexities("挿入ソート") == ("O(n)", "O(n²)", "O(n²)")
+    assert literature_complexities("クイックソート")[2] == "O(n²)"
+    assert literature_complexities(None) is None
+    assert literature_complexities("未知のソート") is None
+
+
 def test_confidence_bounds(example_source):
     for name in ("bubble_sort", "merge_sort"):
         result = analyze_function(example_source(name), name)

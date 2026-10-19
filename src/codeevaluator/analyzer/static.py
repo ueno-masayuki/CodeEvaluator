@@ -60,6 +60,20 @@ def analyze_function(source: str, func_name: str) -> StaticAnalysisResult:
     if res.worst_term is not None and res.worst_term != res.term:
         worst = res.worst_term.to_class()
 
+    # 最良ケース: 楽観的評価 (データ依存 while = 0 回、早期 break = 1 回) で
+    # 平均より真に小さくなる場合のみ報告する
+    best = None
+    if complexity not in (ComplexityClass.UNKNOWN, ComplexityClass.EXPONENTIAL):
+        best_res = module.analyze(func_name, best=True)
+        if not best_res.exponential and best_res.term < res.term:
+            best_cls = best_res.term.to_class()
+            if best_cls is not ComplexityClass.UNKNOWN:
+                best = best_cls
+                res.reasons.append(
+                    f"最良ケース: {best_cls.label()} "
+                    "(データ依存ループが初回に終了、または早期 break する場合)"
+                )
+
     return StaticAnalysisResult(
         function_name=func_name,
         complexity=complexity,
@@ -70,6 +84,7 @@ def analyze_function(source: str, func_name: str) -> StaticAnalysisResult:
         recursion_kind=res.recursion_kind,
         recognized_algorithm=recognized,
         worst_case=worst,
+        best_case=best,
     )
 
 
@@ -92,33 +107,36 @@ class _ModuleAnalyzer:
 
     def __init__(self, funcs: dict[str, ast.FunctionDef]):
         self.funcs = funcs
-        self._memo: dict[str, _FuncResult] = {}
-        self._stack: set[str] = set()
+        self._memo: dict[tuple[str, bool], _FuncResult] = {}
+        self._stack: set[tuple[str, bool]] = set()
 
-    def analyze(self, name: str) -> _FuncResult:
-        if name in self._memo:
-            return self._memo[name]
-        self._stack.add(name)
+    def analyze(self, name: str, best: bool = False) -> _FuncResult:
+        key = (name, best)
+        if key in self._memo:
+            return self._memo[key]
+        self._stack.add(key)
         try:
-            result = _FunctionAnalyzer(self.funcs[name], self).run()
+            result = _FunctionAnalyzer(self.funcs[name], self, best_mode=best).run()
         finally:
-            self._stack.discard(name)
-        self._memo[name] = result
+            self._stack.discard(key)
+        self._memo[key] = result
         return result
 
-    def cost_of_call(self, name: str) -> tuple[ComplexityTerm, str | None, int]:
+    def cost_of_call(
+        self, name: str, best: bool = False
+    ) -> tuple[ComplexityTerm, str | None, int]:
         """同一モジュール内のユーザー関数呼び出しのコストを返す。
 
         戻り値: (コスト項, 日本語根拠 or None, 追加の仮定数)
         """
-        if name in self._stack:
+        if (name, best) in self._stack:
             # 相互再帰は簡易解析の対象外: 仮定を置いて線形とみなす
             return (
                 _COST_LINEAR,
                 f"相互再帰 '{name}' は解析対象外のため O(n) と仮定",
                 1,
             )
-        sub = self.analyze(name)
+        sub = self.analyze(name, best=best)
         return (
             sub.term,
             f"関数 '{name}' の呼び出し: {sub.term.label()}",
@@ -129,9 +147,14 @@ class _ModuleAnalyzer:
 class _FunctionAnalyzer:
     """1 つの関数本体の計算量を合成する。"""
 
-    def __init__(self, func: ast.FunctionDef, module: _ModuleAnalyzer):
+    def __init__(
+        self, func: ast.FunctionDef, module: _ModuleAnalyzer, best_mode: bool = False
+    ):
         self.func = func
         self.module = module
+        # 最良ケースモード: データ依存 while を 0 回、早期 break のループを
+        # 1 回として楽観的に評価する
+        self.best_mode = best_mode
         self.result = _FuncResult()
         self._seen_reasons: set[str] = set()
         # 自己再帰呼び出しの記録 (ノードのリスト)
@@ -243,6 +266,9 @@ class _FunctionAnalyzer:
 
     def _for_term(self, stmt: ast.For, depth: int) -> ComplexityTerm:
         self.result.max_loop_depth = max(self.result.max_loop_depth, depth + 1)
+        if self.best_mode and _has_shallow_break(stmt.body):
+            # 最良ケース: 早期 break でループは 1 回で終わる
+            return self._stmts_term(stmt.body, depth + 1)
         iters, label = self._for_iterations(stmt.iter)
         body = max(
             self._stmts_term(stmt.body, depth + 1),
@@ -272,6 +298,12 @@ class _FunctionAnalyzer:
 
     def _while_term(self, stmt: ast.While, depth: int) -> ComplexityTerm:
         self.result.max_loop_depth = max(self.result.max_loop_depth, depth + 1)
+        if self.best_mode:
+            if _is_data_dependent_test(stmt.test):
+                # 最良ケース: データ依存の条件が初回に不成立 → 本体は実行されない
+                return ComplexityTerm.ZERO
+            if _has_shallow_break(stmt.body):
+                return self._stmts_term(stmt.body, depth + 1)
         iters, label, assumed = self._while_iterations(stmt)
         body = max(
             self._stmts_term(stmt.body, depth + 1),
@@ -414,7 +446,7 @@ class _FunctionAnalyzer:
                 self.self_calls.append(call)
                 return ComplexityTerm.ZERO
             if name in self.module.funcs:
-                cost, reason, extra = self.module.cost_of_call(name)
+                cost, reason, extra = self.module.cost_of_call(name, self.best_mode)
                 if reason:
                     self._add_reason(reason, assumption=extra > 0)
                 return cost
@@ -663,6 +695,32 @@ class _FunctionAnalyzer:
         if found_linear:
             return "linear", 1
         return "unknown", 1
+
+
+def _is_data_dependent_test(test: ast.expr) -> bool:
+    """while 条件が要素の値に依存するか (data[j] > key のような添字比較)。"""
+    return any(isinstance(sub, ast.Subscript) for sub in ast.walk(test))
+
+
+def _has_shallow_break(body: list[ast.stmt]) -> bool:
+    """ループ本体の直下 (入れ子ループの内側は除く) に break があるか。"""
+
+    def scan(stmts: list[ast.stmt]) -> bool:
+        for s in stmts:
+            if isinstance(s, ast.Break):
+                return True
+            if isinstance(s, (ast.For, ast.While)):
+                continue  # 内側ループの break は外側を止めない
+            if isinstance(s, ast.If):
+                if scan(s.body) or scan(s.orelse):
+                    return True
+            elif isinstance(s, (ast.Try, ast.With)):
+                inner = getattr(s, "body", [])
+                if scan(inner):
+                    return True
+        return False
+
+    return scan(body)
 
 
 def _is_const_offset(node: ast.expr | None) -> bool:
