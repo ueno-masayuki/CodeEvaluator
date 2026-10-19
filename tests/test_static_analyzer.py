@@ -151,6 +151,82 @@ def test_unknown_function_raises():
         analyze_function("def f(a):\n    return a", "g")
 
 
+def test_three_way_merge_sort_linearithmic():
+    source = """
+def merge3_sort(arr):
+    if len(arr) <= 1:
+        return list(arr)
+    third = len(arr) // 3
+    a = merge3_sort(arr[:third])
+    b = merge3_sort(arr[third:2*third])
+    c = merge3_sort(arr[2*third:])
+    out = []
+    import heapq
+    for x in heapq.merge(a, b, c):
+        out.append(x)
+    return out
+"""
+    result = analyze_function(source, "merge3_sort")
+    # T(n) = 3·T(n/3) + O(n) → O(n log n)
+    assert result.complexity is ComplexityClass.LINEARITHMIC
+    assert any("3 分割" in r or "T(n/3)" in r.replace(" ", "") for r in result.reasoning)
+
+
+def test_master_case1_integer_exponent():
+    source = """
+def quad_divide(arr):
+    if len(arr) <= 1:
+        return list(arr)
+    mid = len(arr) // 2
+    a = quad_divide(arr[:mid])
+    b = quad_divide(arr[:mid])
+    c = quad_divide(arr[mid:])
+    d = quad_divide(arr[mid:])
+    for x in arr:
+        pass
+    return a + b + c + d
+"""
+    result = analyze_function(source, "quad_divide")
+    # T(n) = 4·T(n/2) + O(n) → O(n²) (ケース1、log2 4 = 2)
+    assert result.complexity is ComplexityClass.QUADRATIC
+
+
+def test_master_case1_noninteger_exponent_unknown():
+    source = """
+def karatsuba_like(arr):
+    if len(arr) <= 1:
+        return list(arr)
+    mid = len(arr) // 2
+    a = karatsuba_like(arr[:mid])
+    b = karatsuba_like(arr[mid:])
+    c = karatsuba_like(arr[:mid])
+    for x in arr:
+        pass
+    return a + b + c
+"""
+    result = analyze_function(source, "karatsuba_like")
+    # T(n) = 3·T(n/2) + O(n) → O(n^1.58): 既知クラス外 → 不明 + 指数を根拠に明記
+    assert result.complexity is ComplexityClass.UNKNOWN
+    assert result.confidence <= 0.5
+    assert any("n^1.58" in r for r in result.reasoning)
+
+
+def test_binary_search_logarithmic():
+    source = """
+def bsearch(arr, x, lo, hi):
+    if lo >= hi:
+        return lo
+    mid = (lo + hi) // 2
+    if arr[mid] < x:
+        return bsearch(arr, x, mid + 1, hi)
+    return bsearch(arr, x, lo, mid)
+"""
+    result = analyze_function(source, "bsearch")
+    # 排他分岐の 2 箇所の自己呼び出しは実行パスあたり a=1 →
+    # T(n) = T(n/2) + O(1) → O(log n)
+    assert result.complexity is ComplexityClass.LOGARITHMIC
+
+
 def test_bisect_insort_is_quadratic():
     source = """
 import bisect

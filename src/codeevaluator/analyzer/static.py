@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass, field
 
 from codeevaluator.analyzer import patterns
@@ -135,8 +136,8 @@ class _FunctionAnalyzer:
         self._seen_reasons: set[str] = set()
         # 自己再帰呼び出しの記録 (ノードのリスト)
         self.self_calls: list[ast.Call] = []
-        # 代入の事前走査: 半分割・パーティション変数の検出に使う
-        self._halving_names: set[str] = set()
+        # 代入の事前走査: 分割インデックス (変数名 → 分割数 b)・パーティション変数
+        self._halving_names: dict[str, int] = {}
         self._partition_names: set[str] = set()
         self._prescan_assignments()
 
@@ -173,12 +174,22 @@ class _FunctionAnalyzer:
             if not isinstance(target, ast.Name):
                 continue
             value = sub.value
-            # 値の式に // 2 や >> 1 を含む → 半分割インデックス
+            # 値の式に // b や >> k を含む → 分割インデックス (分割数 b を記録)
             for inner in ast.walk(value):
                 if isinstance(inner, ast.BinOp) and isinstance(
                     inner.op, (ast.FloorDiv, ast.RShift)
                 ):
-                    self._halving_names.add(target.id)
+                    divisor = 2
+                    if isinstance(inner.right, ast.Constant) and isinstance(
+                        inner.right.value, int
+                    ) and inner.right.value > 0:
+                        divisor = (
+                            2 ** inner.right.value
+                            if isinstance(inner.op, ast.RShift)
+                            else inner.right.value
+                        )
+                    if divisor >= 2:
+                        self._halving_names[target.id] = divisor
             # 条件付き内包表記 → パーティション結果
             if isinstance(value, (ast.ListComp, ast.GeneratorExp)) and any(
                 gen.ifs for gen in value.generators
@@ -453,22 +464,33 @@ class _FunctionAnalyzer:
         """自己再帰を分類し、簡易マスター定理で全体の計算量を求める。"""
         res = self.result
         res.has_recursion = True
-        a = len(self.self_calls)
-        kind = self._classify_reduction()
+        # a は「1 回の実行パスで行われる自己呼び出し数」: if/else の排他分岐は
+        # max を取る (二分探索の 2 箇所の return を a=1 と正しく数えるため)
+        a = max(1, self._max_path_self_calls(self.func.body))
+        kind, b = self._classify_reduction()
         res.recursion_kind = kind
         f = local_work
 
         if kind in ("divide_halving", "divide_partition"):
-            term = self._master_divide(a, f)
+            term = self._master_divide(a, b, f)
+            if term is None:
+                # n^{log_b a} が非整数指数 → 既知クラス外
+                exp = math.log(a) / math.log(b)
+                self._add_reason(
+                    f"分割統治 T(n) = {a}·T(n/{b}) + {f.label()} "
+                    f"→ O(n^{exp:.2f}) (マスター定理ケース1、既知クラス外)"
+                )
+                res.term = ComplexityTerm(99, 99)  # UNKNOWN へ写像される番兵値
+                return
             if kind == "divide_halving":
                 self._add_reason(
-                    f"半分割の分割統治 (自己呼び出し {a} 箇所) + 各段 {f.label()} "
-                    f"→ {term.label()}"
+                    f"{b} 分割の分割統治 T(n) = {a}·T(n/{b}) + {f.label()} "
+                    f"→ {term.label()} (マスター定理)"
                 )
             else:
                 self._add_reason(
-                    f"パーティション分割の分割統治 (自己呼び出し {a} 箇所) + 各段 {f.label()} "
-                    f"→ 平均 {term.label()}"
+                    f"パーティション分割の分割統治 (自己呼び出し {a} 箇所、平均 {b} 分割) "
+                    f"+ 各段 {f.label()} → 平均 {term.label()}"
                 )
                 # 最悪ケース: 分割が毎回偏ると線形再帰相当
                 worst = ComplexityTerm(f.poly + 1, f.log)
@@ -502,26 +524,89 @@ class _FunctionAnalyzer:
             else:
                 res.term = ComplexityTerm(f.poly + 1, f.log)
 
-    def _master_divide(self, a: int, f: ComplexityTerm) -> ComplexityTerm:
-        """T(n) = a·T(n/2) + f(n) の簡易解 (a は 1 または 2 を想定)。"""
-        if a <= 1:
-            # T(n) = T(n/2) + f(n): f が定数なら log、そうでなければ f が支配
-            if f == ComplexityTerm.ZERO:
-                return ComplexityTerm.LOG_N
-            return f
-        # a >= 2 (2 分割とみなす)
-        if f.poly >= 2:
-            return f  # 各段の仕事が支配 (マスター定理ケース 3)
-        if f.poly == 1:
-            return ComplexityTerm(1, f.log + 1)  # ケース 2: n log n 系
-        # f.poly == 0 (定数/対数) → 葉の数が支配: O(n)
-        return ComplexityTerm.N
+    def _max_path_self_calls(self, stmts: list[ast.stmt]) -> int:
+        """1 本の実行パスに現れる自己呼び出し数の最大値を数える。
 
-    def _classify_reduction(self) -> str:
-        """自己呼び出しの引数からサイズ削減方法を分類する。"""
+        if/else は排他分岐として max を取り、return/raise で終わる分岐の
+        後続文はそのパスに含めない (早期 return の排他性を反映)。
+        """
+
+        def count_expr(node: ast.AST) -> int:
+            return sum(
+                1
+                for sub in ast.walk(node)
+                if isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == self.func.name
+            )
+
+        def terminates(body: list[ast.stmt]) -> bool:
+            return bool(body) and isinstance(body[-1], (ast.Return, ast.Raise))
+
+        if not stmts:
+            return 0
+        s, rest = stmts[0], stmts[1:]
+        rest_count = self._max_path_self_calls(rest)
+
+        if isinstance(s, ast.If):
+            body_count = self._max_path_self_calls(s.body)
+            orelse_count = self._max_path_self_calls(s.orelse)
+            path_body = body_count + (0 if terminates(s.body) else rest_count)
+            path_orelse = orelse_count + (
+                0 if s.orelse and terminates(s.orelse) else rest_count
+            )
+            return count_expr(s.test) + max(path_body, path_orelse)
+        if isinstance(s, (ast.For, ast.While)):
+            inner = self._max_path_self_calls(s.body) + self._max_path_self_calls(
+                s.orelse
+            )
+            head = count_expr(s.iter if isinstance(s, ast.For) else s.test)
+            return head + inner + rest_count
+        if isinstance(s, ast.Try):
+            inner = (
+                self._max_path_self_calls(s.body)
+                + max(
+                    (self._max_path_self_calls(h.body) for h in s.handlers),
+                    default=0,
+                )
+                + self._max_path_self_calls(s.orelse)
+                + self._max_path_self_calls(s.finalbody)
+            )
+            return inner + rest_count
+        if isinstance(s, ast.With):
+            return self._max_path_self_calls(s.body) + rest_count
+        if isinstance(s, (ast.Return, ast.Raise)):
+            return count_expr(s)  # パスはここで終わる
+        return count_expr(s) + rest_count
+
+    def _master_divide(
+        self, a: int, b: int, f: ComplexityTerm
+    ) -> ComplexityTerm | None:
+        """T(n) = a·T(n/b) + f(n) の一般マスター定理。
+
+        臨界指数 c = log_b(a) と f の多項式次数 d を比較する:
+        - d = c → n^d log^{k+1} n (ケース 2、f の log 次数 k を保持)
+        - d > c → f が支配 (ケース 3)
+        - d < c → n^c が支配 (ケース 1)。c が非整数なら None (既知クラス外)
+        """
+        b = max(b, 2)
+        c = math.log(a) / math.log(b) if a > 1 else 0.0
+        d = f.poly
+        if abs(c - d) < 1e-9:
+            return ComplexityTerm(d, f.log + 1)
+        if d > c:
+            return f
+        if abs(c - round(c)) < 1e-9:
+            return ComplexityTerm(int(round(c)), 0)
+        return None
+
+    def _classify_reduction(self) -> tuple[str, int]:
+        """自己呼び出しの引数からサイズ削減方法と分割数 b を分類する。"""
         found_halving = False
         found_partition = False
         found_linear = False
+        divisors: list[int] = []
+        halving_keys = set(self._halving_names)
 
         for call in self.self_calls:
             for arg in call.args:
@@ -533,8 +618,10 @@ class _FunctionAnalyzer:
                         for n in ast.walk(arg.slice)
                         if isinstance(n, ast.Name)
                     }
-                    if names & self._halving_names:
+                    used = names & halving_keys
+                    if used:
                         found_halving = True
+                        divisors.extend(self._halving_names[u] for u in used)
                     elif _is_const_offset(lower) or _is_const_offset(upper):
                         found_linear = True
                     else:
@@ -550,12 +637,14 @@ class _FunctionAnalyzer:
                 ):
                     found_partition = True
                     continue
-                # mid / mid+1 等の半分割インデックス
+                # mid / mid+1 等の分割インデックス
                 names = {
                     n.id for n in ast.walk(arg) if isinstance(n, ast.Name)
                 }
-                if names & self._halving_names:
+                used = names & halving_keys
+                if used:
                     found_halving = True
+                    divisors.extend(self._halving_names[u] for u in used)
                     continue
                 # n - 1 型
                 if (
@@ -565,13 +654,15 @@ class _FunctionAnalyzer:
                 ):
                     found_linear = True
 
+        # 分割数 b: 検出した除数の最頻値 (なければ 2 分割とみなす)
+        b = max(set(divisors), key=divisors.count) if divisors else 2
         if found_partition:
-            return "divide_partition"
+            return "divide_partition", 2
         if found_halving:
-            return "divide_halving"
+            return "divide_halving", b
         if found_linear:
-            return "linear"
-        return "unknown"
+            return "linear", 1
+        return "unknown", 1
 
 
 def _is_const_offset(node: ast.expr | None) -> bool:
