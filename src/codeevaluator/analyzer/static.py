@@ -50,6 +50,9 @@ def analyze_function(source: str, func_name: str) -> StaticAnalysisResult:
             )
 
     confidence = max(0.3, round(0.9 - 0.15 * res.assumptions, 2))
+    if complexity is ComplexityClass.UNKNOWN:
+        # 既知クラスへ写像できなかった判定を高信頼と表示しない
+        confidence = min(confidence, 0.4)
     recognized = patterns.recognize(funcs[func_name], funcs)
 
     worst = None
@@ -215,6 +218,11 @@ class _FunctionAnalyzer:
         if isinstance(stmt, ast.FunctionDef):
             # 入れ子関数の定義自体はコスト 0 (呼び出し時に評価)
             return ComplexityTerm.ZERO
+        if isinstance(stmt, ast.Delete) and any(
+            isinstance(t, ast.Subscript) for t in stmt.targets
+        ):
+            self._add_reason("del list[i] は要素シフトを伴う: O(n)")
+            return _COST_LINEAR
         # 代入・式・return 等: 式中の呼び出しコストを拾う
         term = ComplexityTerm.ZERO
         for child in ast.iter_child_nodes(stmt):
@@ -380,6 +388,14 @@ class _FunctionAnalyzer:
                 return _COST_SORTED
             if name in ("min", "max", "sum", "list", "tuple", "set", "reversed"):
                 return _COST_LINEAR
+            if name in ("insort", "insort_left", "insort_right"):
+                self._add_reason(
+                    f"bisect.{name}() は二分探索 O(log n) + 挿入シフト O(n): O(n)"
+                )
+                return _COST_LINEAR
+            if name in ("bisect", "bisect_left", "bisect_right"):
+                self._add_reason(f"bisect.{name}() は二分探索: O(log n)")
+                return _COST_LOG
             if name in ("len", "range", "abs", "int", "float", "print", "enumerate", "zip"):
                 return ComplexityTerm.ZERO
             if name == self.func.name:
@@ -398,6 +414,20 @@ class _FunctionAnalyzer:
             if attr == "sort":
                 self._add_reason("list.sort() (Timsort) を使用: O(n log n)")
                 return _COST_SORTED
+            if attr in ("insort", "insort_left", "insort_right"):
+                self._add_reason(
+                    f"bisect.{attr}() は二分探索 O(log n) + 挿入シフト O(n): O(n)"
+                )
+                return _COST_LINEAR
+            if attr in ("bisect", "bisect_left", "bisect_right"):
+                self._add_reason(f"bisect.{attr}() は二分探索: O(log n)")
+                return _COST_LOG
+            if attr == "join":
+                self._add_reason("str.join() はシーケンス走査: O(n)")
+                return _COST_LINEAR
+            if attr == "merge" and isinstance(func.value, ast.Name) and func.value.id == "heapq":
+                # heapq.merge は遅延イテレータ: コストは消費側のループで計上される
+                return ComplexityTerm.ZERO
             if attr in ("insert", "remove", "index", "count", "extend", "copy"):
                 self._add_reason(f"list.{attr}() は内部で線形走査/シフト: O(n)")
                 return _COST_LINEAR

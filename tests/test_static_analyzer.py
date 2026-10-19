@@ -151,6 +151,67 @@ def test_unknown_function_raises():
         analyze_function("def f(a):\n    return a", "g")
 
 
+def test_bisect_insort_is_quadratic():
+    source = """
+import bisect
+def binary_insertion_sort(arr):
+    result = []
+    for x in arr:
+        bisect.insort(result, x)
+    return result
+"""
+    result = analyze_function(source, "binary_insertion_sort")
+    # insort = 二分探索 O(log n) + シフト O(n) → 全体 O(n²)
+    assert result.complexity is ComplexityClass.QUADRATIC
+
+
+def test_bisect_search_only_is_linearithmic():
+    source = """
+from bisect import bisect_left
+def count_positions(arr, queries):
+    data = sorted(arr)
+    out = []
+    for q in queries:
+        out.append(bisect_left(data, q))
+    return out
+"""
+    result = analyze_function(source, "count_positions")
+    assert result.complexity is ComplexityClass.LINEARITHMIC
+
+
+def test_del_subscript_linear_cost():
+    source = """
+def drain(arr):
+    data = list(arr)
+    out = []
+    for _ in range(len(data)):
+        out.append(data[0])
+        del data[0]
+    return out
+"""
+    result = analyze_function(source, "drain")
+    assert result.complexity is ComplexityClass.QUADRATIC
+
+
+def test_unknown_result_has_low_confidence():
+    # O(n² log n) は既知クラス外 → 不明 + 低信頼度
+    source = """
+def f(arr):
+    n = len(arr)
+    total = 0
+    for i in range(n):
+        for j in range(n):
+            k = n
+            while k > 1:
+                k //= 2
+                total += 1
+    return total
+"""
+    result = analyze_function(source, "f")
+    assert result.complexity is ComplexityClass.UNKNOWN
+    assert result.confidence <= 0.5
+
+
 def test_confidence_bounds(example_source):
     for name in ("bubble_sort", "merge_sort"):
         result = analyze_function(example_source(name), name)
