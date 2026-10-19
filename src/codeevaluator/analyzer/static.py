@@ -159,9 +159,12 @@ class _FunctionAnalyzer:
         self._seen_reasons: set[str] = set()
         # 自己再帰呼び出しの記録 (ノードのリスト)
         self.self_calls: list[ast.Call] = []
-        # 代入の事前走査: 分割インデックス (変数名 → 分割数 b)・パーティション変数
+        # 代入の事前走査: 分割インデックス (変数名 → 分割数 b)・パーティション変数・
+        # サイズ変数 (len() 由来)・初期値代入 (記号的解析用)
         self._halving_names: dict[str, int] = {}
         self._partition_names: set[str] = set()
+        self._size_names: set[str] = set()
+        self._assign_exprs: dict[str, ast.expr] = {}
         self._prescan_assignments()
 
     # ---------- 公開 ----------
@@ -218,6 +221,20 @@ class _FunctionAnalyzer:
                 gen.ifs for gen in value.generators
             ):
                 self._partition_names.add(target.id)
+            # n = len(data) 型 → サイズ変数
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "len"
+            ):
+                self._size_names.add(target.id)
+            # 自己参照しない代入は初期値候補 (gap = n // 2 等)。
+            # gap = int(gap / 1.3) のような自己更新は初期値ではない
+            value_names = {
+                n.id for n in ast.walk(value) if isinstance(n, ast.Name)
+            }
+            if target.id not in value_names:
+                self._assign_exprs.setdefault(target.id, value)
 
     # ---------- 文の合成 ----------
 
@@ -304,6 +321,11 @@ class _FunctionAnalyzer:
                 return ComplexityTerm.ZERO
             if _has_shallow_break(stmt.body):
                 return self._stmts_term(stmt.body, depth + 1)
+        if not self.best_mode:
+            # 最良ケースモードではヒューリスティックの楽観評価を優先する
+            symbolic_term = self._try_symbolic_while(stmt, depth)
+            if symbolic_term is not None:
+                return symbolic_term
         iters, label, assumed = self._while_iterations(stmt)
         body = max(
             self._stmts_term(stmt.body, depth + 1),
@@ -315,6 +337,30 @@ class _FunctionAnalyzer:
             assumption=assumed,
         )
         return iters.times(max(body, ComplexityTerm.ZERO))
+
+    def _try_symbolic_while(
+        self, stmt: ast.While, depth: int
+    ) -> ComplexityTerm | None:
+        """幾何変数 + 依存内側ループの while を記号的に解析する (対象外は None)。"""
+        from codeevaluator.analyzer import symbolic  # sympy の import を遅延
+
+        try:
+            res = symbolic.analyze_geometric_while(
+                stmt,
+                self._size_names,
+                self._assign_exprs,
+                lambda s: self._stmt_term(s, depth + 1),
+            )
+        except Exception:  # noqa: BLE001 - 記号化失敗は従来解析にフォールバック
+            return None
+        if res is None:
+            return None
+        for i, reason in enumerate(res.reasons):
+            self._add_reason(reason, assumption=i >= 1)
+        if res.term is None:
+            # 既知クラス外 (非整数指数など) → UNKNOWN へ写像される番兵値
+            return ComplexityTerm(97, 97)
+        return res.term
 
     def _while_iterations(
         self, stmt: ast.While

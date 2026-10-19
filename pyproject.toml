@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.0",
     "pandas>=2.0",
     "matplotlib>=3.9",
+    "sympy>=1.12",
 ]
 
 [tool.setuptools.packages.find]

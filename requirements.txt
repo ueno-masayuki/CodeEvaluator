@@ -1,5 +1,6 @@
 numpy>=2.0
 pandas>=2.0
 matplotlib>=3.9
+sympy>=1.12
 streamlit>=1.38
 pytest>=8.0
