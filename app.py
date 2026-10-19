@@ -58,11 +58,14 @@ def main() -> None:
         repeats = st.slider("サイズごとの反復回数", 2, 10, 5)
         timeout_s = st.slider("1 回の実行のタイムアウト (秒)", 1, 30, 5)
         extra_kinds = st.multiselect(
-            "追加の入力種別 (適応性の確認用)",
+            "追加の入力種別",
             options=["sorted", "reversed"],
-            default=[],
+            default=["sorted", "reversed"],
             format_func=lambda k: {"sorted": "整列済み", "reversed": "逆順"}[k],
-            help="フィットはランダム入力で行い、追加種別は適応的かどうかの注記に使います。",
+            help=(
+                "ランダム入力に加えて計測する入力種別。種別ごとに計算量オーダーを"
+                "判定します (最良/最悪ケースの実測確認用)。総合判定はランダム入力で行います。"
+            ),
         )
 
         st.warning(
@@ -204,11 +207,33 @@ def main() -> None:
         elif not result.correctness_ok:
             st.error("❌ " + (result.notes[0] if result.notes else "正当性検査に失敗しました"))
         else:
-            st.metric("実測計算量", result.summary_label())
-            if not math.isnan(result.exponent):
-                st.caption(
-                    f"log-log 回帰の実測指数: {result.exponent:.2f} ± {result.exponent_stderr:.2f}"
-                )
+            kind_ja_map = {"random": "ランダム", "sorted": "整列済み", "reversed": "逆順"}
+            kind_summaries = [
+                result.kind_results[k]
+                for k in ("random", "sorted", "reversed")
+                if k in result.kind_results
+            ]
+            if len(kind_summaries) >= 2:
+                # 種別ごとの実測計算量を横並びで表示 (値はクラス名、詳細は caption)
+                for col, summary in zip(st.columns(len(kind_summaries)), kind_summaries):
+                    with col:
+                        st.metric(
+                            f"実測計算量 ({kind_ja_map.get(summary.input_kind, summary.input_kind)})",
+                            summary.best_fit.complexity.label()
+                            if summary.best_fit
+                            else "判定不能",
+                        )
+                        if not math.isnan(summary.exponent):
+                            st.caption(
+                                f"O(n^{summary.exponent:.2f})・"
+                                f"指数 {summary.exponent:.2f} ± {summary.exponent_stderr:.2f}"
+                            )
+            else:
+                st.metric("実測計算量", result.summary_label())
+                if not math.isnan(result.exponent):
+                    st.caption(
+                        f"log-log 回帰の実測指数: {result.exponent:.2f} ± {result.exponent_stderr:.2f}"
+                    )
             if result.timed_out:
                 st.warning("一部のサイズはタイムアウトにより打ち切られました。")
             for note in result.notes:
@@ -221,20 +246,24 @@ def main() -> None:
                 {
                     "サイズ n": [m.size for m in result.measurements],
                     "入力種別": [
-                        {"random": "ランダム", "sorted": "整列済み", "reversed": "逆順"}[
-                            m.input_kind
-                        ]
+                        kind_ja_map.get(m.input_kind, m.input_kind)
                         for m in result.measurements
                     ],
                     "中央値 [秒]": [m.median_time for m in result.measurements],
                     "試行回数": [len(m.times) for m in result.measurements],
                 }
             )
+            fit_rows = [
+                (kind_ja_map.get(s.input_kind, s.input_kind), f)
+                for s in kind_summaries
+                for f in s.fits
+            ] or [("ランダム", f) for f in result.fits]
             fit_df = pd.DataFrame(
                 {
-                    "モデル": [f.complexity.label() for f in result.fits],
-                    "R² (log 空間)": [round(f.r_squared, 4) for f in result.fits],
-                    "AIC": [round(f.aic, 2) for f in result.fits],
+                    "入力種別": [kind for kind, _ in fit_rows],
+                    "モデル": [f.complexity.label() for _, f in fit_rows],
+                    "R² (log 空間)": [round(f.r_squared, 4) for _, f in fit_rows],
+                    "AIC": [round(f.aic, 2) for _, f in fit_rows],
                 }
             )
             tab_meas, tab_fit = st.tabs(["測定値", "フィット比較"])
@@ -258,16 +287,17 @@ def main() -> None:
         empirical = result.best_fit.complexity
         if theoretical in (ComplexityClass.UNKNOWN, ComplexityClass.EXPONENTIAL):
             st.warning(
-                f"理論 {theoretical.label()}・実測 {result.summary_label()} — "
+                f"理論 {theoretical.label()}・実測 {result.summary_label()} (ランダム入力) — "
                 "理論オーダーを特定できなかったため比較できません。"
             )
         elif classes_agree(theoretical, empirical, static_result.worst_case):
             st.success(
-                f"✅ 理論 {theoretical.label()}・実測 {result.summary_label()} — **一致しています**"
+                f"✅ 理論 {theoretical.label()}・実測 {result.summary_label()} (ランダム入力) — "
+                "**一致しています**"
             )
         else:
             st.warning(
-                f"⚠️ 理論 {theoretical.label()}・実測 {result.summary_label()} — "
+                f"⚠️ 理論 {theoretical.label()}・実測 {result.summary_label()} (ランダム入力) — "
                 "**一致していません**。測定範囲が狭い、定数項が支配的、"
                 "または静的解析の仮定が実装と合っていない可能性があります。"
             )
