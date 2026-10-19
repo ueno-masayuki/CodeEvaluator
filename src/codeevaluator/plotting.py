@@ -84,35 +84,42 @@ def make_loglog_figure(result: EmpiricalResult, fit_kind: str = "random") -> Fig
             markeredgecolor=_SURFACE, markeredgewidth=0.8,
         )
 
-    # フィット曲線 (フィット対象種別の範囲で描く)
-    fit_points = sorted(
-        (m for m in result.measurements if m.input_kind == fit_kind),
-        key=lambda m: m.size,
+    # フィット曲線: 種別ごとの最良フィットを種別色の実線で描く
+    kind_results = result.kind_results or (
+        {fit_kind: None} if result.fits else {}
     )
-    if fit_points and result.fits:
-        n_min, n_max = fit_points[0].size, fit_points[-1].size
-        xs = np.geomspace(n_min, n_max, 128)
-        # 最良フィット: データと同系色の実線
-        best = result.fits[0]
+    for kind in kind_results:
+        summary = result.kind_results.get(kind)
+        fits = summary.fits if summary is not None else result.fits
+        best = fits[0] if fits else None
+        if best is None:
+            continue
+        points = sorted(
+            (m for m in result.measurements if m.input_kind == kind),
+            key=lambda m: m.size,
+        )
+        if not points:
+            continue
+        xs = np.geomspace(points[0].size, points[-1].size, 128)
+        kind_label = (_KIND_JA if ja else _KIND_EN).get(kind, kind)
         ax.plot(
             xs, best.scale * best.complexity.model(xs),
-            color=_SERIES.get(fit_kind, _INK), linewidth=2.0, zorder=2,
+            color=_SERIES.get(kind, _INK), linewidth=2.0, zorder=2,
             label=(
-                f"最良フィット {best.complexity.label()} (R²={best.r_squared:.3f})"
-                if ja
-                else f"best fit {best.complexity.label()} (R²={best.r_squared:.3f})"
+                f"{kind_label}: {best.complexity.label()} (R²={best.r_squared:.3f})"
             ),
         )
-        # 次点 2 モデル: 無彩色の破線 (文脈情報)
-        for alt, style in zip(result.fits[1:3], ("--", ":")):
-            ax.plot(
-                xs, alt.scale * alt.complexity.model(xs),
-                color=_MUTED, linewidth=1.4, linestyle=style, zorder=1,
-                label=(
-                    f"次点 {alt.complexity.label()}" if ja
-                    else f"runner-up {alt.complexity.label()}"
-                ),
-            )
+        # 次点 2 モデル: 主要種別のみ、無彩色の破線 (文脈情報)
+        if kind == fit_kind:
+            for alt, style in zip(fits[1:3], ("--", ":")):
+                ax.plot(
+                    xs, alt.scale * alt.complexity.model(xs),
+                    color=_MUTED, linewidth=1.4, linestyle=style, zorder=1,
+                    label=(
+                        f"次点 {alt.complexity.label()}" if ja
+                        else f"runner-up {alt.complexity.label()}"
+                    ),
+                )
 
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")

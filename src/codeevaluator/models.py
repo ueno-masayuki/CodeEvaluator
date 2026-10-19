@@ -181,6 +181,30 @@ class FitResult:
     aic: float
 
 
+def _format_summary(best_fit: FitResult | None, exponent: float) -> str:
+    """「O(n^1.98) ≈ O(n²)」形式の表示文字列を作る。"""
+    if best_fit is None:
+        return "判定不能"
+    if math.isnan(exponent):
+        return best_fit.complexity.label()
+    return f"O(n^{exponent:.2f}) ≈ {best_fit.complexity.label()}"
+
+
+@dataclass(frozen=True)
+class KindFitSummary:
+    """1つの入力種別 (random / sorted / reversed) に対するフィット結果一式。"""
+
+    input_kind: str
+    fits: list[FitResult]            # AIC 昇順
+    best_fit: FitResult | None
+    exponent: float
+    exponent_stderr: float
+
+    def summary_label(self) -> str:
+        """「O(n^1.98) ≈ O(n²)」形式の表示文字列を返す。"""
+        return _format_summary(self.best_fit, self.exponent)
+
+
 @dataclass(frozen=True)
 class EmpiricalResult:
     """実測ベンチマークと曲線フィットの総合結果。"""
@@ -194,11 +218,10 @@ class EmpiricalResult:
     timed_out: bool = False
     correctness_ok: bool = True
     notes: list[str] = field(default_factory=list)
+    # 入力種別ごとのフィット結果。トップレベルの fits / best_fit / exponent は
+    # 主要種別 (通常 random) の値を保持する (後方互換・総合判定用)。
+    kind_results: dict[str, KindFitSummary] = field(default_factory=dict)
 
     def summary_label(self) -> str:
         """「O(n^1.98) ≈ O(n²)」形式の表示文字列を返す。"""
-        if self.best_fit is None:
-            return "判定不能"
-        if math.isnan(self.exponent):
-            return self.best_fit.complexity.label()
-        return f"O(n^{self.exponent:.2f}) ≈ {self.best_fit.complexity.label()}"
+        return _format_summary(self.best_fit, self.exponent)

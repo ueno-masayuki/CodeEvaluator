@@ -26,6 +26,9 @@ MAX_INPUT_SIZE = 2 ** 16
 
 _SEED = 42
 
+#: これより速い実行は内部反復で平均化する (タイマーノイズ対策)
+_MIN_TIMING_SECONDS = 1e-3
+
 
 def generate_input(size: int, kind: str, seed: int = _SEED) -> list[int]:
     """再現性のある固定シードでベンチマーク入力を生成する。"""
@@ -97,6 +100,18 @@ def _worker_main(conn, source: str, func_name: str) -> None:
                     start = time.perf_counter()
                     func(arg)
                     elapsed = time.perf_counter() - start
+                    # 1ms 未満の高速実行はタイマーノイズが支配的になるため、
+                    # timeit と同様に内部反復して平均を取る (コピーは計測外で準備)
+                    if elapsed < _MIN_TIMING_SECONDS:
+                        k = min(
+                            1000,
+                            max(1, int(_MIN_TIMING_SECONDS / max(elapsed, 1e-7))),
+                        )
+                        copies = [list(data) for _ in range(k)]
+                        start = time.perf_counter()
+                        for c in copies:
+                            func(c)
+                        elapsed = (time.perf_counter() - start) / k
                 finally:
                     gc.enable()
                 conn.send(TimingReply(elapsed=elapsed))

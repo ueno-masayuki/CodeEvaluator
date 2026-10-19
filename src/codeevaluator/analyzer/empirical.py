@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from codeevaluator.fitting import fit_measurements
-from codeevaluator.models import EmpiricalResult, Measurement
+from codeevaluator.models import EmpiricalResult, KindFitSummary, Measurement
 from codeevaluator.runner import SortRunner, WorkerError
 
 #: 進捗コールバック型: (完了数, 全体数, 日本語メッセージ)
@@ -27,8 +27,8 @@ class BenchmarkConfig:
     max_exp: int = 13                # 最大サイズ 2^max_exp
     repeats: int = 5                 # サイズごとの反復回数
     per_run_timeout: float = 5.0     # 1 回の実行のタイムアウト (秒)
-    input_kinds: tuple[str, ...] = ("random",)  # 先頭の種別をフィットに使う
-    extra_kinds: tuple[str, ...] = ()           # 適応性の注記用 (sorted/reversed)
+    input_kinds: tuple[str, ...] = ("random",)  # 先頭の種別を総合判定のフィットに使う
+    extra_kinds: tuple[str, ...] = ()           # 追加種別 (sorted/reversed)。種別ごとにフィットも行う
 
     def sizes(self) -> list[int]:
         return [2 ** e for e in range(self.min_exp, self.max_exp + 1)]
@@ -148,24 +148,47 @@ def _finalize(
     timed_out: bool,
     correctness_ok: bool,
 ) -> EmpiricalResult:
-    """フィットを実行して EmpiricalResult に詰める。"""
-    fit_points = [m for m in measurements if m.input_kind == fit_kind]
-    fits, exponent, stderr, fit_notes = fit_measurements(
-        [m.size for m in fit_points],
-        [m.median_time for m in fit_points],
+    """入力種別ごとにフィットを実行して EmpiricalResult に詰める。"""
+    notes = list(notes)
+    kind_results: dict[str, KindFitSummary] = {}
+    # 測定に現れた順で種別ごとにフィットする (fit_kind を先頭に)
+    kinds = list(dict.fromkeys(
+        [fit_kind] + [m.input_kind for m in measurements]
+    ))
+    for kind in kinds:
+        points = [m for m in measurements if m.input_kind == kind]
+        if not points:
+            continue
+        fits, exponent, stderr, fit_notes = fit_measurements(
+            [m.size for m in points],
+            [m.median_time for m in points],
+        )
+        kind_results[kind] = KindFitSummary(
+            input_kind=kind,
+            fits=fits,
+            best_fit=fits[0] if fits else None,
+            exponent=exponent,
+            exponent_stderr=stderr,
+        )
+        suffix = "" if kind == fit_kind else f" ({_kind_ja(kind)}入力)"
+        notes.extend(n + suffix for n in fit_notes)
+
+    primary = kind_results.get(
+        fit_kind,
+        KindFitSummary(fit_kind, [], None, math.nan, math.nan),
     )
-    notes = notes + fit_notes
     _append_adaptivity_note(measurements, fit_kind, notes)
     return EmpiricalResult(
         function_name=func_name,
         measurements=measurements,
-        fits=fits,
-        best_fit=fits[0] if fits else None,
-        exponent=exponent,
-        exponent_stderr=stderr,
+        fits=primary.fits,
+        best_fit=primary.best_fit,
+        exponent=primary.exponent,
+        exponent_stderr=primary.exponent_stderr,
         timed_out=timed_out,
         correctness_ok=correctness_ok,
         notes=notes,
+        kind_results=kind_results,
     )
 
 
