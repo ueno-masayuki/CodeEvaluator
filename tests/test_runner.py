@@ -19,6 +19,19 @@ class TestGenerateInput:
         with pytest.raises(ValueError, match="不明な入力種別"):
             generate_input(8, "zigzag")
 
+    def test_median_killer_properties(self):
+        data = generate_input(64, "median_killer")
+        # 0..n-1 の順列で決定的
+        assert sorted(data) == list(range(64))
+        assert data == generate_input(64, "median_killer")
+        # どの再帰段でも中央要素が部分列の最大値になっている
+        # (中央ピボットの 3-way クイックソートで毎回 greater 側が空になる)
+        part = data
+        while len(part) > 1:
+            mid = part[len(part) // 2]
+            assert mid == max(part)
+            part = [x for x in part if x < mid]
+
 
 SORT_OK = """
 def my_sort(arr):

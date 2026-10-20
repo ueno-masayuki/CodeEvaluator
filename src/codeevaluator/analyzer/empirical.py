@@ -135,9 +135,12 @@ def run_benchmark(
 
 
 def _kind_ja(kind: str) -> str:
-    return {"random": "ランダム", "sorted": "整列済み", "reversed": "逆順"}.get(
-        kind, kind
-    )
+    return {
+        "random": "ランダム",
+        "sorted": "整列済み",
+        "reversed": "逆順",
+        "median_killer": "メディアンキラー",
+    }.get(kind, kind)
 
 
 def _finalize(

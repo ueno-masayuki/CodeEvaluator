@@ -60,12 +60,19 @@ def main() -> None:
         timeout_s = st.slider("1 回の実行のタイムアウト (秒)", 1, 30, 5)
         extra_kinds = st.multiselect(
             "追加の入力種別",
-            options=["sorted", "reversed"],
+            options=["sorted", "reversed", "median_killer"],
             default=["sorted", "reversed"],
-            format_func=lambda k: {"sorted": "整列済み", "reversed": "逆順"}[k],
+            format_func=lambda k: {
+                "sorted": "整列済み",
+                "reversed": "逆順",
+                "median_killer": "メディアンキラー",
+            }[k],
             help=(
                 "ランダム入力に加えて計測する入力種別。種別ごとに計算量オーダーを"
                 "判定します (最良/最悪ケースの実測確認用)。総合判定はランダム入力で行います。"
+                "「メディアンキラー」は中央要素ピボットのクイックソートで分割が毎回"
+                "最大に偏る構成列で、最悪ケース O(n²) を実測で確認できます"
+                " (他の実装に対しては最悪ケースを保証しません)。"
             ),
         )
 
@@ -227,10 +234,15 @@ def main() -> None:
         elif not result.correctness_ok:
             st.error("❌ " + (result.notes[0] if result.notes else "正当性検査に失敗しました"))
         else:
-            kind_ja_map = {"random": "ランダム", "sorted": "整列済み", "reversed": "逆順"}
+            kind_ja_map = {
+                "random": "ランダム",
+                "sorted": "整列済み",
+                "reversed": "逆順",
+                "median_killer": "メディアンキラー",
+            }
             kind_summaries = [
                 result.kind_results[k]
-                for k in ("random", "sorted", "reversed")
+                for k in ("random", "sorted", "reversed", "median_killer")
                 if k in result.kind_results
             ]
             if len(kind_summaries) >= 2:
@@ -338,6 +350,24 @@ def main() -> None:
                     f"逆順入力の実測 {summary.summary_label()} "
                     "(最悪ケースの入力が逆順とは限りません)"
                 )
+        if static_result.worst_case is not None and "median_killer" in result.kind_results:
+            summary = result.kind_results["median_killer"]
+            if summary.best_fit is not None:
+                st.caption(
+                    f"参考: 最悪ケース理論 {static_result.worst_case.label()} ⇔ "
+                    f"メディアンキラー入力の実測 {summary.summary_label()}"
+                )
+        if static_result.pivot_kind == "middle" and static_result.worst_case is not None:
+            st.caption(
+                "この実装は中央要素ピボットのため、整列済み・逆順入力では最悪ケースは"
+                "発生しません。サイドバーの追加入力種別「メディアンキラー」で"
+                "最悪ケースを実測できます。"
+            )
+        elif static_result.pivot_kind in ("first", "last") and static_result.worst_case is not None:
+            st.caption(
+                "この実装は先頭/末尾要素ピボットのため、整列済み・逆順入力が"
+                "最悪ケースに該当します。"
+            )
 
 if __name__ == "__main__":
     # Streamlit は __name__ == "__main__" でスクリプトを実行する。

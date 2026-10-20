@@ -38,12 +38,23 @@ _MUTED = "#898781"
 _GRID = "#e1e0d9"
 _BASELINE = "#c3c2b7"
 _SERIES = {  # 入力種別 → カテゴリカルスロット (固定順)
-    "random": "#2a78d6",   # blue
-    "sorted": "#1baf7a",   # aqua
-    "reversed": "#eb6834", # orange
+    "random": "#2a78d6",         # blue
+    "sorted": "#1baf7a",         # aqua
+    "reversed": "#eb6834",       # orange
+    "median_killer": "#eda100",  # yellow
 }
-_KIND_JA = {"random": "ランダム入力", "sorted": "整列済み入力", "reversed": "逆順入力"}
-_KIND_EN = {"random": "random input", "sorted": "sorted input", "reversed": "reversed input"}
+_KIND_JA = {
+    "random": "ランダム入力",
+    "sorted": "整列済み入力",
+    "reversed": "逆順入力",
+    "median_killer": "メディアンキラー入力",
+}
+_KIND_EN = {
+    "random": "random input",
+    "sorted": "sorted input",
+    "reversed": "reversed input",
+    "median_killer": "median-killer input",
+}
 
 
 def _find_cjk_font() -> str | None:

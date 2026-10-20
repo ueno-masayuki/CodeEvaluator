@@ -32,6 +32,8 @@ _MIN_TIMING_SECONDS = 1e-3
 
 def generate_input(size: int, kind: str, seed: int = _SEED) -> list[int]:
     """再現性のある固定シードでベンチマーク入力を生成する。"""
+    if kind == "median_killer":
+        return _median_killer_input(size)
     rng = random.Random(seed + size)
     data = [rng.randint(0, size * 10) for _ in range(size)]
     if kind == "sorted":
@@ -40,6 +42,22 @@ def generate_input(size: int, kind: str, seed: int = _SEED) -> list[int]:
         data.sort(reverse=True)
     elif kind != "random":
         raise ValueError(f"不明な入力種別: {kind}")
+    return data
+
+
+def _median_killer_input(size: int) -> list[int]:
+    """中央要素ピボットのクイックソートで分割が毎回最大に偏る構成列。
+
+    「どの再帰段でも中央位置に部分列の最大値が来る」よう、値を昇順に
+    1 つずつ中央位置へ挿入して組み立てる (長さ k の列の中央 k//2 に
+    最大値、それを除くと 1 段前の構成列になる)。中央要素をピボットに
+    取る実装では毎回 greater 側が空になり、線形再帰 = O(n²) を誘発する。
+    他のピボット選択に対しては単なる 1 つの入力であり、最悪ケースを
+    保証しない。決定的 (シード不要)。
+    """
+    data: list[int] = []
+    for value in range(size):
+        data.insert((len(data) + 1) // 2, value)
     return data
 
 

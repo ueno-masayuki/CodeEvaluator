@@ -123,6 +123,44 @@ def test_insertion_sort_best_and_worst_cases():
 
 
 @pytest.mark.slow
+def test_quick_sort_median_killer_quadratic():
+    """中央ピボットのクイックソート: メディアンキラー入力で最悪 O(n²) が実測できる。"""
+    config = BenchmarkConfig(
+        min_exp=7, max_exp=11, repeats=3, per_run_timeout=5.0,
+        extra_kinds=("median_killer",),
+    )
+    result = run_benchmark(_source("quick_sort"), "quick_sort", config)
+    assert result.correctness_ok
+    killer = result.kind_results["median_killer"]
+    assert (
+        killer.best_fit.complexity
+        in (ComplexityClass.QUADRATIC, ComplexityClass.CUBIC)
+        or killer.exponent > 1.6
+    ), f"メディアンキラー: {killer.summary_label()}"
+    # ランダム入力は平均 O(n log n) のまま
+    assert result.exponent < 1.5
+
+
+@pytest.mark.slow
+def test_quick_sort_first_worst_on_sorted_input():
+    """先頭ピボット版: 整列済み入力が最悪ケース O(n²) に該当する。"""
+    config = BenchmarkConfig(
+        min_exp=7, max_exp=11, repeats=3, per_run_timeout=5.0,
+        extra_kinds=("sorted",),
+    )
+    result = run_benchmark(
+        _source("quick_sort_first"), "quick_sort_first", config
+    )
+    assert result.correctness_ok
+    worst = result.kind_results["sorted"]
+    assert (
+        worst.best_fit.complexity
+        in (ComplexityClass.QUADRATIC, ComplexityClass.CUBIC)
+        or worst.exponent > 1.6
+    ), f"整列済み: {worst.summary_label()}"
+
+
+@pytest.mark.slow
 def test_non_sort_function_rejected():
     source = "def fake_sort(arr):\n    return arr\n"
     result = run_benchmark(source, "fake_sort")
