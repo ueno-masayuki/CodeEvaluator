@@ -85,6 +85,7 @@ def analyze_function(source: str, func_name: str) -> StaticAnalysisResult:
         recognized_algorithm=recognized,
         worst_case=worst,
         best_case=best,
+        pivot_kind=res.pivot_kind,
     )
 
 
@@ -100,6 +101,7 @@ class _FuncResult:
     recursion_kind: str | None = None
     max_loop_depth: int = 0
     exponential: bool = False
+    pivot_kind: str | None = None
 
 
 class _ModuleAnalyzer:
@@ -577,6 +579,18 @@ class _FunctionAnalyzer:
                     f"分割が毎回偏る最悪ケースでは {worst.label()} "
                     "(例: ピボットが常に最小値/最大値)"
                 )
+                res.pivot_kind = self._detect_pivot_kind()
+                pivot_note = {
+                    "first": "ピボットは先頭要素: 整列済み・逆順入力が最悪ケースに該当します",
+                    "last": "ピボットは末尾要素: 整列済み・逆順入力が最悪ケースに該当します",
+                    "middle": (
+                        "ピボットは中央要素: ランダム・整列済み・逆順入力では最悪ケースは"
+                        "発生しません (発生には特定の構成列が必要です)"
+                    ),
+                    "random": "ピボットはランダム選択: 最悪ケースは確率的にほぼ発生しません",
+                }.get(res.pivot_kind)
+                if pivot_note:
+                    self._add_reason(pivot_note)
             res.term = term
         elif kind == "linear":
             if a >= 2:
@@ -601,6 +615,49 @@ class _FunctionAnalyzer:
                 res.term = ComplexityTerm(99, 0)
             else:
                 res.term = ComplexityTerm(f.poly + 1, f.log)
+
+    def _detect_pivot_kind(self) -> str | None:
+        """ピボット選択方法を分類する ("pivot" を含む変数への代入から判定)。"""
+        for sub in ast.walk(self.func):
+            if not (
+                isinstance(sub, ast.Assign)
+                and len(sub.targets) == 1
+                and isinstance(sub.targets[0], ast.Name)
+                and "pivot" in sub.targets[0].id.lower()
+            ):
+                continue
+            value = sub.value
+            # random.choice(arr) / random.randint(...) 等
+            for inner in ast.walk(value):
+                if isinstance(inner, ast.Name) and inner.id == "random":
+                    return "random"
+                if isinstance(inner, ast.Attribute) and inner.attr in (
+                    "choice", "randint", "randrange",
+                ):
+                    return "random"
+            if isinstance(value, ast.Subscript):
+                index = value.slice
+                if isinstance(index, ast.Constant) and index.value == 0:
+                    return "first"
+                if (
+                    isinstance(index, ast.UnaryOp)
+                    and isinstance(index.op, ast.USub)
+                    and isinstance(index.operand, ast.Constant)
+                    and index.operand.value == 1
+                ):
+                    return "last"
+                # arr[len(arr)//2] / arr[mid] (mid は分割インデックス)
+                for inner in ast.walk(index):
+                    if isinstance(inner, ast.BinOp) and isinstance(
+                        inner.op, (ast.FloorDiv, ast.RShift)
+                    ):
+                        return "middle"
+                    if (
+                        isinstance(inner, ast.Name)
+                        and inner.id in self._halving_names
+                    ):
+                        return "middle"
+        return None
 
     def _max_path_self_calls(self, stmts: list[ast.stmt]) -> int:
         """1 本の実行パスに現れる自己呼び出し数の最大値を数える。

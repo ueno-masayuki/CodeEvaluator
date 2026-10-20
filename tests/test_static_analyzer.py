@@ -14,6 +14,7 @@ from codeevaluator.models import ComplexityClass
         ("selection_sort", "selection_sort", ComplexityClass.QUADRATIC),
         ("merge_sort", "merge_sort", ComplexityClass.LINEARITHMIC),
         ("quick_sort", "quick_sort", ComplexityClass.LINEARITHMIC),
+        ("quick_sort_first", "quick_sort_first", ComplexityClass.LINEARITHMIC),
         ("heap_sort", "heap_sort", ComplexityClass.LINEARITHMIC),
         ("builtin_sort", "builtin_sort", ComplexityClass.LINEARITHMIC),
     ],
@@ -37,6 +38,36 @@ def test_quick_sort_worst_case_noted(example_source):
     assert result.recursion_kind == "divide_partition"
     assert result.worst_case is ComplexityClass.QUADRATIC
     assert any("最悪" in r for r in result.reasoning)
+
+
+def test_quick_sort_middle_pivot_detected(example_source):
+    result = analyze_function(example_source("quick_sort"), "quick_sort")
+    assert result.pivot_kind == "middle"
+    # 整列済み/逆順では最悪ケースが出ないことが根拠に明記される
+    assert any("最悪ケースは発生しません" in r for r in result.reasoning)
+
+
+def test_quick_sort_first_pivot_detected(example_source):
+    result = analyze_function(example_source("quick_sort_first"), "quick_sort_first")
+    assert result.pivot_kind == "first"
+    assert result.worst_case is ComplexityClass.QUADRATIC
+    assert any("整列済み・逆順入力が最悪ケース" in r for r in result.reasoning)
+
+
+def test_random_pivot_detected():
+    source = """
+import random
+def quick_sort_rand(arr):
+    if len(arr) <= 1:
+        return list(arr)
+    pivot = random.choice(arr)
+    less = [x for x in arr if x < pivot]
+    equal = [x for x in arr if x == pivot]
+    greater = [x for x in arr if x > pivot]
+    return quick_sort_rand(less) + equal + quick_sort_rand(greater)
+"""
+    result = analyze_function(source, "quick_sort_rand")
+    assert result.pivot_kind == "random"
 
 
 def test_merge_sort_recursion_detected(example_source):

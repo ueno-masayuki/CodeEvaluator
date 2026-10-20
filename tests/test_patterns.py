@@ -12,6 +12,7 @@ EXPECTED_NAMES = {
     "selection_sort": "選択ソート",
     "merge_sort": "マージソート",
     "quick_sort": "クイックソート",
+    "quick_sort_first": "クイックソート",
     "heap_sort": "ヒープソート",
     "builtin_sort": "組み込みソート (Timsort)",
 }

@@ -160,6 +160,7 @@ class StaticAnalysisResult:
     recognized_algorithm: str | None = None
     worst_case: ComplexityClass | None = None  # 平均と最悪が異なる場合のみ(クイックソート等)
     best_case: ComplexityClass | None = None   # 平均と最良が異なる場合のみ(挿入ソート等)
+    pivot_kind: str | None = None  # "first" | "last" | "middle" | "random" (パーティション分割時)
 
 
 @dataclass(frozen=True)

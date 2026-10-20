@@ -13,6 +13,7 @@ EXAMPLE_FUNCTIONS = {
     "selection_sort": "selection_sort",
     "merge_sort": "merge_sort",
     "quick_sort": "quick_sort",
+    "quick_sort_first": "quick_sort_first",
     "heap_sort": "heap_sort",
     "builtin_sort": "builtin_sort",
 }
